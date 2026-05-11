@@ -1,0 +1,8 @@
+interface:
+  display_name: "GPT-SoVITS Codex Voice"
+  short_description: "Turn Codex replies into GPT-SoVITS audio"
+  brand_color: "#2563EB"
+  default_prompt: "Use $gptsovits-codex-voice to turn your latest reply into a wav audio file."
+
+policy:
+  allow_implicit_invocation: true

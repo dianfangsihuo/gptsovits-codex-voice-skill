@@ -1,0 +1,7 @@
+state.json
+watcher-error.log
+*.tmp
+*.wav
+*.json
+!agents/openai.yaml
+!package.json
