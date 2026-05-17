@@ -5,7 +5,13 @@ Codex skill for speaking Codex replies through a local GPT-SoVITS API.
 It supports two modes:
 
 - one-shot synthesis: send text to GPT-SoVITS and play the generated WAV
-- persistent voice mode: watch the current Codex session log and automatically speak new assistant messages
+- persistent voice mode: watch all Codex session logs and automatically speak new assistant messages
+
+## Latest Update
+
+- Voice mode now watches all Codex session logs by default, including sessions opened after voice mode starts.
+- Startup now performs a silent GPT-SoVITS warmup to reduce the delay before the first spoken reply.
+- The watcher poll interval is shorter and partial JSON lines are buffered until complete.
 
 ## Requirements
 
@@ -69,7 +75,7 @@ Check status:
 C:\Users\Administrator\.codex\skills\gptsovits-codex-voice\scripts\status.ps1
 ```
 
-When voice mode is active, `watch-session.ps1` runs in the background, tails the current Codex session `.jsonl`, and sends new assistant `commentary` or `final_answer` messages to GPT-SoVITS automatically. This avoids passing every reply through `-Text` manually.
+When voice mode is active, `watch-session.ps1` runs in the background, tails Codex session `.jsonl` files, and sends new assistant `commentary` or `final_answer` messages to GPT-SoVITS automatically. Existing historical messages are skipped by default, while newly created sessions are picked up automatically. This avoids passing every reply through `-Text` manually.
 
 ## Playback
 
