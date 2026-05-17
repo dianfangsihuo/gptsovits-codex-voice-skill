@@ -1,21 +1,18 @@
-﻿param(
+param(
     [string]$SessionPath,
     [string]$StatePath = "C:\Users\Administrator\.codex\skills\gptsovits-codex-voice\state.json",
-    [int]$PollIntervalMs = 500,
+    [int]$PollIntervalMs = 250,
     [switch]$ReadExisting
 )
 
 $ErrorActionPreference = "Stop"
 
-function Get-LatestSessionPath {
+function Get-SessionPaths {
     $sessionRoot = Join-Path $env:USERPROFILE ".codex\sessions"
-    $latest = Get-ChildItem -LiteralPath $sessionRoot -Recurse -Filter "rollout-*.jsonl" |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-    if (-not $latest) {
-        throw "No Codex session jsonl file found under $sessionRoot"
+    if (-not (Test-Path -LiteralPath $sessionRoot)) {
+        return @()
     }
-    return $latest.FullName
+    return @(Get-ChildItem -LiteralPath $sessionRoot -Recurse -Filter "rollout-*.jsonl" | ForEach-Object { $_.FullName })
 }
 
 function Read-NewText {
@@ -61,27 +58,85 @@ function Test-VoiceModeActive {
     }
 }
 
-if (-not $SessionPath) {
-    $SessionPath = Get-LatestSessionPath
+function Get-CompleteLines {
+    param(
+        [string]$Path,
+        [string]$Text,
+        [hashtable]$Pending
+    )
+
+    if ($Pending.ContainsKey($Path)) {
+        $Text = [string]$Pending[$Path] + $Text
+    }
+
+    $endsWithNewline = $Text.EndsWith("`n") -or $Text.EndsWith("`r")
+    $lines = @($Text -split "`r?`n")
+    if (-not $endsWithNewline) {
+        $Pending[$Path] = $lines[-1]
+        if ($lines.Count -le 1) {
+            return @()
+        }
+        return @($lines[0..($lines.Count - 2)])
+    }
+
+    $Pending[$Path] = ""
+    return $lines
 }
-if (-not (Test-Path -LiteralPath $SessionPath)) {
+
+if ($SessionPath -and -not (Test-Path -LiteralPath $SessionPath)) {
     throw "Session file not found: $SessionPath"
 }
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $speakScript = Join-Path $scriptDir "speak.ps1"
-$position = 0
-if (-not $ReadExisting) {
-    $position = (Get-Item -LiteralPath $SessionPath).Length
+$positions = @{}
+$pending = @{}
+
+if ($SessionPath) {
+    $positions[$SessionPath] = 0
+    if (-not $ReadExisting) {
+        $positions[$SessionPath] = (Get-Item -LiteralPath $SessionPath).Length
+    }
 }
+else {
+    foreach ($path in Get-SessionPaths) {
+        $positions[$path] = 0
+        if (-not $ReadExisting) {
+            $positions[$path] = (Get-Item -LiteralPath $path).Length
+        }
+    }
+}
+
 $seen = New-Object "System.Collections.Generic.HashSet[string]"
 
 while (Test-VoiceModeActive -Path $StatePath) {
-    $chunk = Read-NewText -Path $SessionPath -Position $position
-    $position = $chunk.Position
+    if ($SessionPath) {
+        $paths = @($SessionPath)
+    }
+    else {
+        $paths = Get-SessionPaths
+        foreach ($path in $paths) {
+            if (-not $positions.ContainsKey($path)) {
+                $positions[$path] = 0
+            }
+        }
+    }
 
-    if (-not [string]::IsNullOrWhiteSpace($chunk.Text)) {
-        foreach ($line in ($chunk.Text -split "`r?`n")) {
+    foreach ($path in $paths) {
+        if (-not (Test-Path -LiteralPath $path)) {
+            continue
+        }
+        if (-not $positions.ContainsKey($path)) {
+            $positions[$path] = 0
+        }
+
+        $chunk = Read-NewText -Path $path -Position ([long]$positions[$path])
+        $positions[$path] = $chunk.Position
+        if ([string]::IsNullOrEmpty($chunk.Text)) {
+            continue
+        }
+
+        foreach ($line in (Get-CompleteLines -Path $path -Text ([string]$chunk.Text) -Pending $pending)) {
             if ([string]::IsNullOrWhiteSpace($line)) {
                 continue
             }
@@ -106,7 +161,7 @@ while (Test-VoiceModeActive -Path $StatePath) {
                 continue
             }
 
-            $key = "$($entry.timestamp)|$phase|$message"
+            $key = "$path|$($entry.timestamp)|$phase|$message"
             if ($seen.Contains($key)) {
                 continue
             }
@@ -126,4 +181,3 @@ while (Test-VoiceModeActive -Path $StatePath) {
 
     Start-Sleep -Milliseconds $PollIntervalMs
 }
-

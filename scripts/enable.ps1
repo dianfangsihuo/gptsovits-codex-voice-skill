@@ -1,7 +1,8 @@
-﻿param(
+param(
     [string]$StatePath = "C:\Users\Administrator\.codex\skills\gptsovits-codex-voice\state.json",
     [string]$OutputDir = "C:\Users\Administrator\Downloads\codex-gptsovits-voice",
-    [string]$SessionPath
+    [string]$SessionPath,
+    [switch]$SkipWarmup
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,18 +13,9 @@ if ($parent) {
 }
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
-if (-not $SessionPath) {
-    $sessionRoot = Join-Path $env:USERPROFILE ".codex\sessions"
-    $latest = Get-ChildItem -LiteralPath $sessionRoot -Recurse -Filter "rollout-*.jsonl" |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-    if ($latest) {
-        $SessionPath = $latest.FullName
-    }
-}
-
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $watchScript = Join-Path $scriptDir "watch-session.ps1"
+$speakScript = Join-Path $scriptDir "speak.ps1"
 $argList = @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
@@ -34,7 +26,6 @@ if ($SessionPath) {
     $argList += @("-SessionPath", "`"$SessionPath`"")
 }
 
-$watcherPid = $null
 $proc = Start-Process -FilePath "powershell.exe" -ArgumentList $argList -WindowStyle Hidden -PassThru
 $watcherPid = $proc.Id
 
@@ -44,9 +35,26 @@ $state = [ordered]@{
     output_dir = $OutputDir
     session_path = $SessionPath
     watcher_pid = $watcherPid
-    mode = "session_watcher"
+    mode = $(if ($SessionPath) { "session_watcher" } else { "all_sessions_watcher" })
+    warmed_up = $false
 }
 
 $state | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $StatePath -Encoding UTF8
-$state | ConvertTo-Json -Depth 6
 
+if (-not $SkipWarmup) {
+    try {
+        $warmupPath = Join-Path $OutputDir "codex-voice-warmup.wav"
+        $warmupText = -join @([char]0x9884, [char]0x70ED)
+        & $speakScript -Text $warmupText -OutputPath $warmupPath -NoPlay | Out-Null
+        $state.warmed_up = $true
+        $state.warmed_up_at = (Get-Date).ToString("o")
+        $state.warmup_output_path = $warmupPath
+        $state | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $StatePath -Encoding UTF8
+    }
+    catch {
+        $state.warmup_error = $_.Exception.Message
+        $state | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $StatePath -Encoding UTF8
+    }
+}
+
+$state | ConvertTo-Json -Depth 6
